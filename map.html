@@ -4,42 +4,91 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b0b0d">
 <title>Call-Out live location</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
-  :root { --bg: #111; --fg: #fff; --muted: #bbb; --live: #2e7d32; --amber: #ffa000; --red: #d32f2f; }
+  :root {
+    --bg: #0b0b0d; --card: rgba(23, 24, 27, .92); --line: #34363b; --fg: #fff; --muted: #b9bcc3;
+    --live: #43a047; --live-glow: #76d275; --amber: #ffb300; --red: #e53935;
+  }
   html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg);
-    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  #bar { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; padding: 12px 16px;
-    padding-top: calc(12px + env(safe-area-inset-top)); background: rgba(17,17,17,.94); }
-  #status { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
-  #dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); flex: none; }
-  #dot.live { background: var(--live); box-shadow: 0 0 0 0 rgba(46,125,50,.7); animation: pulse 1.6s infinite; }
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+  #map { position: absolute; inset: 0; background: #111; }
+
+  /* Status pill, top left */
+  #pill { position: fixed; top: calc(12px + env(safe-area-inset-top)); left: 12px; z-index: 1000;
+    display: flex; align-items: center; gap: 8px; padding: 8px 14px 8px 10px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--line); backdrop-filter: blur(8px); font-weight: 700; font-size: 14px; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  #dot.live { background: var(--live); box-shadow: 0 0 0 0 rgba(67,160,71,.7); animation: pulse 1.6s infinite; }
   #dot.waiting { background: var(--amber); }
   #dot.ended { background: var(--red); }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(46,125,50,.7); } 100% { box-shadow: 0 0 0 12px rgba(46,125,50,0); } }
-  #detail { color: var(--muted); font-size: 14px; margin-top: 2px; white-space: pre-line; }
-  #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; background: #222; }
-  #ended { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
-    background: var(--bg); z-index: 900; text-align: center; padding: 24px; }
-  #ended h1 { font-size: 32px; margin: 0 0 8px; }
-  #ended p { color: var(--muted); margin: 0; white-space: pre-line; }
-  #follow { position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 1000;
-    background: #fff; color: #111; border: 0; border-radius: 24px; padding: 12px 18px; font-weight: 700;
-    box-shadow: 0 2px 8px rgba(0,0,0,.4); }
-  #follow.off { background: #444; color: #ddd; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(67,160,71,.7); } 100% { box-shadow: 0 0 0 10px rgba(67,160,71,0); } }
+
+  /* Info card, bottom */
+  #card { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 1000;
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px;
+    backdrop-filter: blur(8px); box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+  #title { font-size: 18px; font-weight: 800; margin: 0 0 2px; }
+  #sub { color: var(--muted); font-size: 13px; margin: 0; }
+  #stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .stat { background: rgba(255,255,255,.06); border-radius: 12px; padding: 8px 10px; min-width: 0; }
+  .stat .k { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  .stat .v { font-size: 18px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .v.ok { color: var(--live-glow); }
+  .stat .v.warn { color: var(--amber); }
+  #stats.hidden { display: none; }
+
+  /* Follow button */
+  #follow { position: fixed; right: 12px; bottom: calc(150px + env(safe-area-inset-bottom)); z-index: 1000;
+    width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line); background: var(--card);
+    color: var(--fg); display: flex; align-items: center; justify-content: center; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4); backdrop-filter: blur(8px); }
+  #follow svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; }
+  #follow.on { color: var(--live-glow); border-color: var(--live); }
+
+  /* Marker */
+  .me { position: relative; width: 26px; height: 26px; }
+  .me .ring { position: absolute; inset: 0; border-radius: 50%; background: rgba(67,160,71,.35); animation: ring 1.8s infinite; }
+  .me .core { position: absolute; inset: 6px; border-radius: 50%; background: var(--live); border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+  .me .arrow { position: absolute; left: 50%; top: 50%; width: 0; height: 0; margin: -30px 0 0 -7px;
+    border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 12px solid #fff;
+    transform-origin: 7px 30px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6)); }
+  @keyframes ring { 0% { transform: scale(.6); opacity: .9; } 100% { transform: scale(2.2); opacity: 0; } }
+
+  /* Ended / error overlay */
+  #ended { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 1500;
+    background: var(--bg); text-align: center; padding: 24px; }
+  #ended .icon { width: 72px; height: 72px; border-radius: 50%; margin: 0 auto 18px; display: flex; align-items: center; justify-content: center;
+    background: rgba(229,57,53,.15); color: var(--red); font-size: 34px; font-weight: 800; }
+  #ended h1 { font-size: 28px; margin: 0 0 8px; }
+  #ended p { color: var(--muted); margin: 0; white-space: pre-line; max-width: 420px; }
+
   .leaflet-container { font: inherit; }
+  .leaflet-control-attribution { background: rgba(11,11,13,.7) !important; color: #888 !important; font-size: 10px; }
+  .leaflet-control-attribution a { color: #aaa !important; }
+  .leaflet-bar { border: 1px solid var(--line) !important; box-shadow: none !important; }
+  .leaflet-bar a { background: var(--card) !important; color: var(--fg) !important; border-bottom-color: var(--line) !important; }
 </style>
 </head>
 <body>
-<div id="bar">
-  <div id="status"><span id="dot"></span><span id="statusText">Loading…</span></div>
-  <div id="detail"></div>
-</div>
 <div id="map"></div>
-<button id="follow">Following</button>
-<div id="ended"><div><h1 id="endedTitle">Sharing ended</h1><p id="endedText"></p></div></div>
+<div id="pill"><span id="dot"></span><span id="statusText">Loading…</span></div>
+<button id="follow" class="on" aria-label="Follow">
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+</button>
+<div id="card">
+  <p id="title">Loading…</p>
+  <p id="sub"></p>
+  <div id="stats" class="hidden">
+    <div class="stat"><div class="k">Updated</div><div class="v" id="sUpdated">–</div></div>
+    <div class="stat"><div class="k">Speed</div><div class="v" id="sSpeed">–</div></div>
+    <div class="stat"><div class="k">Accuracy</div><div class="v" id="sAcc">–</div></div>
+  </div>
+</div>
+<div id="ended"><div><div class="icon">!</div><h1 id="endedTitle">Sharing ended</h1><p id="endedText"></p></div></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
@@ -51,71 +100,68 @@
   var token = new URLSearchParams(location.search).get("s") || "";
   var owner = cfg.ownerName || "Lewis";
 
-  var dot = document.getElementById("dot");
-  var statusText = document.getElementById("statusText");
-  var detail = document.getElementById("detail");
-  var endedBox = document.getElementById("ended");
-  var endedTitle = document.getElementById("endedTitle");
-  var endedText = document.getElementById("endedText");
-  var followBtn = document.getElementById("follow");
+  var $ = function (id) { return document.getElementById(id); };
+  var dot = $("dot"), statusText = $("statusText"), title = $("title"), sub = $("sub"), stats = $("stats");
+  var sUpdated = $("sUpdated"), sSpeed = $("sSpeed"), sAcc = $("sAcc");
+  var endedBox = $("ended"), endedTitle = $("endedTitle"), endedText = $("endedText"), followBtn = $("follow");
 
   var map = L.map("map", { zoomControl: false, attributionControl: true }).setView([54.5, -3.0], 6);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19, attribution: "&copy; OpenStreetMap contributors"
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    maxZoom: 19, subdomains: "abcd",
+    attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> &copy; <a href='https://carto.com/attributions'>CARTO</a>"
   }).addTo(map);
-  L.control.zoom({ position: "bottomleft" }).addTo(map);
+  L.control.zoom({ position: "topright" }).addTo(map);
 
-  var trail = L.polyline([], { color: "#d32f2f", weight: 4, opacity: 0.8 }).addTo(map);
-  var accuracy = L.circle([0, 0], { radius: 0, color: "#2e7d32", weight: 1, fillOpacity: 0.12 });
-  var marker = L.circleMarker([0, 0], { radius: 10, color: "#fff", weight: 3, fillColor: "#2e7d32", fillOpacity: 1 });
-  var following = true;
-  var hadFix = false;
-  var lastPointTime = 0;
-  var timer = null;
+  var glow = L.polyline([], { color: "#43a047", weight: 10, opacity: 0.25, lineCap: "round", lineJoin: "round" }).addTo(map);
+  var trail = L.polyline([], { color: "#76d275", weight: 4, opacity: 0.95, lineCap: "round", lineJoin: "round" }).addTo(map);
+  var accuracy = L.circle([0, 0], { radius: 0, color: "#43a047", weight: 1, opacity: 0.5, fillOpacity: 0.08 });
+  var icon = L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13],
+    html: '<div class="me"><div class="ring"></div><div class="core"></div><div class="arrow" id="arrow" style="display:none"></div></div>' });
+  var marker = L.marker([0, 0], { icon: icon, interactive: false, zIndexOffset: 1000 });
 
-  followBtn.addEventListener("click", function () {
-    following = !following;
-    followBtn.textContent = following ? "Following" : "Follow";
-    followBtn.className = following ? "" : "off";
-    if (following && hadFix) map.panTo(marker.getLatLng());
-  });
-  map.on("dragstart", function () { following = false; followBtn.textContent = "Follow"; followBtn.className = "off"; });
+  var following = true, hadFix = false, lastPointTime = 0, timer = null, lastPoint = null;
 
-  function fmtTime(ms) {
-    return new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  function setFollow(on) {
+    following = on;
+    followBtn.className = on ? "on" : "";
+    if (on && hadFix) map.panTo(marker.getLatLng(), { animate: true });
   }
-  function fmtClock(iso) {
-    return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
-  }
+  followBtn.addEventListener("click", function () { setFollow(!following); });
+  map.on("dragstart", function () { setFollow(false); });
+
+  function fmtTime(ms) { return new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }); }
+  function fmtClock(iso) { return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }); }
   function ago(ms) {
     var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
     return s < 60 ? s + " s ago" : Math.round(s / 60) + " min ago";
   }
-  function setStatus(cls, text, extra) {
-    dot.className = cls;
-    statusText.textContent = text;
-    detail.textContent = extra || "";
-  }
-  function showEnded(title, text) {
-    endedTitle.textContent = title;
-    endedText.textContent = text || "";
-    endedBox.style.display = "flex";
-    followBtn.style.display = "none";
+  function setPill(cls, text) { dot.className = cls; statusText.textContent = text; }
+  function showEnded(t, text) {
+    endedTitle.textContent = t; endedText.textContent = text || "";
+    endedBox.style.display = "flex"; followBtn.style.display = "none"; $("card").style.display = "none"; $("pill").style.display = "none";
     if (timer) { clearInterval(timer); timer = null; }
+  }
+  function sourceText(src) {
+    if (!src || src === "app") return "";
+    if (src === "quicktap") return " from Quick Tap";
+    if (src === "door") return " from the door button";
+    if (src === "flic") return " from the Flic button";
+    return " from " + src;
+  }
+
+  function tickStats() {
+    if (lastPoint) sUpdated.textContent = ago(lastPoint.t);
   }
 
   function render(data) {
     var startedAt = data.started_at ? fmtClock(data.started_at) : "";
-    var sourceText = data.source && data.source !== "app" ? " from " + data.source : "";
     var testText = data.test ? " (test)" : "";
 
     if (data.status === "unknown") {
-      setStatus("ended", "Link not recognised");
       showEnded("Link not recognised", "This link is not a Call-Out session. Check the text message for the full link.");
       return;
     }
     if (data.status !== "live") {
-      setStatus("ended", "Sharing ended");
       showEnded("Sharing ended", owner + " stopped sharing at " + fmtClock(data.ended_at) + "." +
         (data.status === "expired" ? "\nThe session reached its time limit." : "") +
         "\nLocation history is not available once sharing has ended.");
@@ -123,60 +169,73 @@
     }
 
     var pts = data.points || [];
+    title.textContent = owner + " is sharing location" + testText;
+    sub.textContent = "Started " + startedAt + sourceText(data.source);
+
     if (pts.length === 0) {
-      setStatus("waiting", "Waiting for the first fix", owner + " started sharing at " + startedAt + sourceText + testText + ".");
+      setPill("waiting", "Waiting for the first fix");
+      stats.classList.add("hidden");
       return;
     }
 
     var latlngs = pts.map(function (p) { return [p.lat, p.lng]; });
+    glow.setLatLngs(latlngs);
     trail.setLatLngs(latlngs);
     var last = pts[pts.length - 1];
+    lastPoint = last;
     var ll = [last.lat, last.lng];
     marker.setLatLng(ll);
-    if (last.accuracy) { accuracy.setLatLng(ll).setRadius(last.accuracy); if (!map.hasLayer(accuracy)) accuracy.addTo(map); }
     if (!map.hasLayer(marker)) marker.addTo(map);
+    if (last.accuracy) { accuracy.setLatLng(ll).setRadius(last.accuracy); if (!map.hasLayer(accuracy)) accuracy.addTo(map); }
+
+    var arrow = document.getElementById("arrow");
+    if (arrow) {
+      if (last.heading != null && last.speed > 0.8) { arrow.style.display = "block"; arrow.style.transform = "rotate(" + Math.round(last.heading) + "deg)"; }
+      else arrow.style.display = "none";
+    }
 
     if (!hadFix) { map.setView(ll, 15); hadFix = true; }
-    else if (following && last.t !== lastPointTime) { map.panTo(ll); }
+    else if (following && last.t !== lastPointTime) { map.panTo(ll, { animate: true }); }
     lastPointTime = last.t;
 
     var mph = last.speed != null ? Math.round(last.speed * 2.23694) : null;
-    var lines = "Started " + startedAt + sourceText + testText +
-      "\nLast update " + fmtTime(last.t) + " (" + ago(last.t) + ")" +
-      (mph != null ? "\n" + mph + " mph" : "") +
-      (last.accuracy ? " · accurate to " + Math.round(last.accuracy) + " m" : "");
-    setStatus("live", "Live: " + owner + " is sharing location", lines);
+    setPill("live", "Live");
+    stats.classList.remove("hidden");
+    sUpdated.textContent = ago(last.t);
+    sUpdated.className = "v " + ((Date.now() - last.t) < 60000 ? "ok" : "warn");
+    sSpeed.textContent = mph != null ? mph + " mph" : "–";
+    sSpeed.className = "v";
+    sAcc.textContent = last.accuracy ? "±" + Math.round(last.accuracy) + " m" : "–";
+    sAcc.className = "v " + (last.accuracy && last.accuracy > 50 ? "warn" : "");
+    sub.textContent = "Started " + startedAt + sourceText(data.source) + " · last fix " + fmtTime(last.t);
   }
 
   function poll() {
     if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
-      setStatus("ended", "Page not configured", "config.js is missing or incomplete.");
+      showEnded("Page not configured", "config.js is missing or incomplete.");
       return;
     }
     fetch(cfg.supabaseUrl.replace(/\/+$/, "") + "/rest/v1/rpc/get_session", {
       method: "POST",
-      headers: {
-        "apikey": cfg.supabaseAnonKey,
-        "Authorization": "Bearer " + cfg.supabaseAnonKey,
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-      },
+      headers: { "apikey": cfg.supabaseAnonKey, "Authorization": "Bearer " + cfg.supabaseAnonKey,
+        "Content-Type": "application/json", "Accept": "application/json" },
       body: JSON.stringify({ p_token: token })
     })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(render)
     .catch(function (e) {
-      setStatus(hadFix ? "live" : "waiting", hadFix ? "Live (reconnecting…)" : "Connecting…", "Could not reach the server: " + e.message);
+      setPill(hadFix ? "live" : "waiting", hadFix ? "Reconnecting…" : "Connecting…");
+      sub.textContent = "Could not reach the server: " + e.message;
     });
   }
 
   if (!token) {
-    setStatus("ended", "No session in link");
     showEnded("No session in link", "Open the link from the text message.");
     return;
   }
   poll();
   timer = setInterval(poll, POLL_MS);
+  setInterval(tickStats, 1000);
 })();
 </script>
 </body>
