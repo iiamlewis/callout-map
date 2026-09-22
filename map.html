@@ -25,6 +25,7 @@
   #dot.live { background: var(--live); box-shadow: 0 0 0 0 rgba(67,160,71,.7); animation: pulse 1.6s infinite; }
   #dot.waiting { background: var(--amber); }
   #dot.ended { background: var(--red); }
+  #pill.idle { color: var(--muted); }
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(67,160,71,.7); } 100% { box-shadow: 0 0 0 10px rgba(67,160,71,0); } }
 
   /* Info card, bottom */
@@ -99,7 +100,9 @@
 (function () {
   var POLL_MS = 5000;
   var cfg = window.CALLOUT_CONFIG || {};
-  var token = new URLSearchParams(location.search).get("s") || "";
+  var params = new URLSearchParams(location.search);
+  var token = params.get("s") || "";
+  var viewerKey = params.get("v") || "";
   var owner = cfg.ownerName || "Lewis";
 
   var $ = function (id) { return document.getElementById(id); };
@@ -143,6 +146,20 @@
     endedBox.style.display = "flex"; followBtn.style.display = "none"; $("card").style.display = "none"; $("pill").style.display = "none";
     if (timer) { clearInterval(timer); timer = null; }
   }
+  function hideEnded() {
+    endedBox.style.display = "none"; followBtn.style.display = ""; $("card").style.display = ""; $("pill").style.display = "";
+  }
+  function resetTrack() {
+    glow.setLatLngs([]); trail.setLatLngs([]);
+    if (map.hasLayer(marker)) map.removeLayer(marker);
+    if (map.hasLayer(accuracy)) map.removeLayer(accuracy);
+    hadFix = false; lastPoint = null; lastPointTime = 0;
+  }
+  function fmtWhen(iso) {
+    var d = new Date(iso), now = new Date();
+    var sameDay = d.toDateString() === now.toDateString();
+    return sameDay ? "at " + fmtClock(iso) : "on " + d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + " at " + fmtClock(iso);
+  }
   function sourceText(src) {
     if (!src || src === "app") return "";
     if (src === "quicktap") return " from Quick Tap";
@@ -160,7 +177,23 @@
     var testText = data.test ? " (test)" : "";
 
     if (data.status === "unknown") {
-      showEnded("Link not recognised", "This link is not a Call-Out session. Check the text message for the full link.");
+      if (viewerKey) showEnded("Viewer link not recognised", "This viewer key has been revoked or mistyped. Ask " + owner + " for a new link.");
+      else showEnded("Link not recognised", "This link is not a Call-Out session. Check the text message for the full link.");
+      return;
+    }
+    if (data.status === "idle") {
+      // Pinned viewer page with nothing live: keep polling so it flips to the map when a call-out starts.
+      hideEnded();
+      setPill("", "No call-out right now");
+      title.textContent = "No call-out right now";
+      sub.textContent = data.last_ended_at ? "Last one ended " + fmtWhen(data.last_ended_at) + ". This page updates on its own." : "This page updates on its own.";
+      stats.classList.add("hidden");
+      if (hadFix) { resetTrack(); }
+      return;
+    }
+    if (data.status !== "live" && viewerKey) {
+      // Should not happen (viewer RPC never returns ended), but never show stale location.
+      resetTrack();
       return;
     }
     if (data.status !== "live") {
@@ -171,6 +204,7 @@
     }
 
     var pts = data.points || [];
+    hideEnded();
     title.textContent = owner + " is sharing location" + testText;
     sub.textContent = "Started " + startedAt + sourceText(data.source);
 
@@ -217,11 +251,13 @@
       showEnded("Page not configured", "config.js is missing or incomplete.");
       return;
     }
-    fetch(cfg.supabaseUrl.replace(/\/+$/, "") + "/rest/v1/rpc/get_session", {
+    var rpc = viewerKey ? "get_live_session_for_viewer" : "get_session";
+    var body = viewerKey ? { p_key: viewerKey } : { p_token: token };
+    fetch(cfg.supabaseUrl.replace(/\/+$/, "") + "/rest/v1/rpc/" + rpc, {
       method: "POST",
       headers: { "apikey": cfg.supabaseAnonKey, "Authorization": "Bearer " + cfg.supabaseAnonKey,
         "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ p_token: token })
+      body: JSON.stringify(body)
     })
     .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(render)
@@ -231,7 +267,7 @@
     });
   }
 
-  if (!token) {
+  if (!token && !viewerKey) {
     showEnded("No session in link", "Open the link from the text message.");
     return;
   }
